@@ -1,51 +1,92 @@
-# Design Doc Protocol (DDP)
+# Design Doc Protocol
 
-三层设计文档的脚手架，加一套确定层与语义层分离的完成度检测器，附带一套诚实的证据纪律。
+DDP updates existing design documents against versioned requirements and ships two agent skills. The `ddp` CLI requires Python 3.10+; installation includes its CommonMark parser. [LICENSE](LICENSE) is MIT. It does not require this repository, a model provider, or a private workspace at runtime.
 
-> **诚实定位**：这不是「被验证有效的设计方法论」。「跨 session 持久化的多层设计文档」对实现质量的影响，在本仓写作时（2026-08）尚无任何已发表研究测量过，本仓自己的验证实验也只产生条件性证据（见「测试结果」节）。我们把脚手架、检测器和验证方案一起开源，邀请复现与批评。
->
-> **协议结构可能随三层拆分终裁调整**：三层（功能设计/实现设计/代码改动清单）的存废是开放问题，本仓的逐层剥离实验结果只对该问题提供条件性证据。
+## Install in one line
 
-## 它解决什么
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first. On macOS or Linux, run this single shell line from the project where you want agent skills, then choose Codex, Claude Code, DSH, OpenCode, or a custom skill parent directory when prompted:
 
-设计文档的失败模式不是没人会写，而是两类：
+```sh
+uv tool install 'https://github.com/zlxdengtianhei/design-doc-protocol/archive/refs/heads/main.zip' && "$(uv tool dir --bin)/ddp-install" install --interactive
+```
 
-1. **骨架生成了、没人填**：核心字段留着占位符就宣称完成。确定层检测器（DC1/DC2 等）对这类失效给字段:行号级的可操作误差信号。
-2. **填了但空泛**：把需求换说法抄一遍当设计。这类失效机械判不出，交给独立语义判定者（regulator，DC3-DC6），判定者只看编号后的文档本身。
+For automation, replace `--interactive` with `--host codex --scope project --project "$PWD"` (repeat `--host` for several hosts, or use `--host all`). `--scope user` installs into the selected host's personal skill directory; `--dir '/path/with spaces/skills'` selects an explicit parent directory. The command installs the `ddp` and `ddp-install` executables through uv's isolated tool environment, then copies the wheel-bundled `design-doc-protocol` and `clean-context` skills, including references and the read-only `workflow.py`, to the chosen location. The install path is separate from the project's design documents (`PROJECT/docs/design` by default).
 
-## 组成
+The installed design skill and installer output include an absolute `python -m ddp` entry from the isolated tool environment, so a host can invoke it even when uv's executable directory is absent from PATH. Re-run `ddp-install upgrade` if that environment moves.
 
-- `core/design_doc/design_doc_scaffold.py`：三层骨架生成（双锚点：功能设计=需求锚，实现设计=单元锚）。
-- `core/design_doc/check_completeness.py`：完成度检测器。确定性壳（占位状态门/必填空格/结构谓词）+ 可选的语义调节器调用。
-- `core/ddp/`：领域产物投影（DDP_ARTIFACT）组装与检查门。
-- `docs/protocol.md`：三层怎么填、填到什么算完的协议（语义层）。
-- `core/design_doc/CHECK_COMPLETENESS_SPEC.md`：检测器的输入/输出/判别契约。
+After installation, run `"$(uv tool dir --bin)/ddp" --help` and `"$(uv tool dir --bin)/ddp-install" doctor --host codex --project "$PWD"` (adjust the host or use `--dir`). A first read-only task is `ddp prepare --project-root PROJECT --change ID --request docs/design/requirements.md --target DESIGN.md`; see [CLI plan format](skills/design-doc-protocol/references/CLI.md). The installer refuses to overwrite a skill it does not own or a file changed since installation.
 
-## 测试结果
+Upgrade CLI and skills with `uv tool install --reinstall --refresh 'https://github.com/zlxdengtianhei/design-doc-protocol/archive/refs/heads/main.zip' && "$(uv tool dir --bin)/ddp-install" upgrade --host codex --project "$PWD"`. The archive installation does not require Git. Uninstall skills with `ddp-install uninstall --host codex --project "$PWD"`, then remove the isolated CLI with `uv tool uninstall design-doc-protocol`. Only installer-owned, unchanged skill files are removed; design documents, DDP state, and user files stay in place. For errors, run `ddp-install doctor` to check the runtime and wheel resources, then `doctor` with your host or custom directory to check the installed files.
 
-功能描述逐条附证据：
+The v0.5 public `core/` tree is a historical API; the 0.6 wheel exposes `ddp` and `ddp-install` rather than importing that tree. Existing callers of `core/` should remain pinned to v0.5 until migrated to the CLI contract.
 
-**确定层壳的判别力**（`core/design_doc/run_oracle.py --reps 0`，rc=0）：
+## Design first, with small updates
 
-| 样本 | 期望 | 实际 |
-|---|---|---|
-| 真实空骨架文档（106 行 20 个核心占位 + 空决策表 + 空状态行） | FLAG | FLAG（34 占位逐条定位 + 空表 + 空状态） |
-| 填实文档（本工具的自设计文档） | PASS | PASS |
-| DC3 软负样本（占位清零但内容是需求回显） | 壳 PASS、调节器 FLAG | 壳 PASS、调节器 FLAG |
+Keep the user's requirement as the source of intent. The current design explains
+inputs, outputs, failures, observable behavior, and decisions; code documentation
+supplies implementation facts. Update the existing authority and affected
+consumers when a requirement changes. One person or agent can handle a small
+update. Use an independent reviewer when the judgment calls for it, rather than
+adding a fixed set of roles to every change.
 
-**语义判定的判别力**（原 DC7 义务降级进调节器后的正负样本对照）：正样本（设计面自称实现行为的权威定义）壳 PASS 而调节器精确 FLAG；负样本（reference-only 表述）双 PASS。判别责任移交而非丢失。
+The CLI performs version, replacement, replay, and recovery checks. The agent
+judges whether the design actually satisfies the requirement and whether all
+consumers were considered. `semantic_status: unknown` is deliberate: a matching
+hash or complete step marker cannot prove semantic correctness.
 
-**逐层剥离实验**（三层结构的条件性证据，诚实呈现「有效性尚未被证明」）：实验设计为三臂（A 三层全有 / B 去实现设计层 / C 直接实现）× 两任务 × 重复 2 次。**结果：未产出可解释证据。** 任务 T2（commit-0/tinydb，greenfield 多模块）六格全 PASS（200/0），但双盲 judge（gpt-5.6-sol）独立观察 + md5 双证显示六格最终产物逐字复现 PyPI 官方 tinydb 4.8.0——worker 形态无工具无网络，唯一解释是模型训练数据记忆——三臂无可见差异，属记忆 ceiling 压平协议作用，非「Layer 2 无用」的证据。任务 T1（SWE-bench Lite pytest-7490，brownfield）六格结构性缺失：415KB prompt 超过传输层 argv 天花板（OS E2BIG ~131KB）且全部大 context 通道配额死亡，无有效运行。故跨任务外推不可用，单任务内亦因 ceiling 无方向信号。完整读数、归因与复现命令见 `docs/d3/ABLATION_RESULT.md` 与 `docs/d3/SOL_D3_JUDGE_VERDICT.md`（随仓发布）。实验为小样本条件性证据，不构成「协议有效/无效」的普遍结论。
+## Storage and reading
 
-**检测器自身测试**：在本仓根目录跑 `python -m pytest core/design_doc/tests core/ddp/tests -q` = **91 passed, 7 skipped**（2026-08-30，Python 3.13）。7 个 skipped 全是「未随本仓发布的母仓集成面」测试（requirement_doc 集成 ×3 文件、phase_runtime 门禁登记 ×2、回执台账链 ×1、intake CLI 集成 ×1），在母仓布局下它们照常运行（该面全量基线 100 passed, 1 skipped）。判别力 oracle：`python core/design_doc/run_oracle.py --reps 0` rc=0（真实空骨架 FLAG、填实文档 PASS、DC3 软负样本壳 PASS 而调节器 FLAG）。
+Paths are relative to the target project, independent of the skill installation.
+Existing layouts are supported through explicit path flags; no filesystem service
+or shared database is required.
 
-## 已知集成面（当前版本的边界）
+| Content | Default / option |
+| --- | --- |
+| Requirement source | Explicit `--request`; examples use `docs/design/requirements.md` |
+| Current design and one change record | `docs/design/`, including `CHANGELOG.md`; `--design-root` |
+| Recovery state | `.design-doc-protocol/`; `--state-dir` |
+| Optional Codebase Explorer output | `docs/codebase/INDEX.md`; select pages with `--code-docs` |
 
-- **语义调节器后端**假定一个「给编号文档回 JSON 判词」的可替换契约；仓内实现绑定一个内部 CLI router，外部使用需自带等价后端（契约见 `core/design_doc/CHECK_COMPLETENESS_SPEC.md` §4）。调节器后端缺席时工具照常工作，语义项报告为 UNKNOWN 而不是假装判过。
-- **未随仓发布的母仓集成面**（调用时显式报错或明示跳过，不静默）：`requirement_doc`（需求文档子系统；`intake.record_requirement` 与 `check_artifact` 的 DA2.RD 子检查依赖它——后者在缺席时报告「未运行」而非判红）、`tool_receipts`（调用台账；缺席时降级为不记录并在回执 dict 里如实标注）、`phase_runtime` 门禁登记面。
-- **目录约定**：scaffold 的默认设计文档目录经 `DDP_DESIGN_DOC_DIR` 环境变量配置，缺省 `<仓根>/design_docs/`；dispatch 文本注入的解析器已随仓（`core/dispatch_parse.py`），todo CLI 落盘路径属母仓布局，独立使用时以注入文本方式提供需求。
-- `core/gatekit/` 为确定层门禁框架的 vendored 副本（来源与日期见文件头注释），与母仓同演进。
+Run `ddp prepare` for the chosen requirement section and target documents. Its
+packet includes current hashes, selected text, and reverse Markdown reference
+candidates. Candidates are hints, not a complete semantic dependency graph.
+Describe the small replacements and the affected consumers using the
+[plan format](skills/design-doc-protocol/references/CLI.md), then run `ddp apply`.
+Related source or target changes are rejected; an unrelated requirement section
+can change without invalidating a section-bound plan. Top-level ATX and Setext
+headings use CommonMark source ranges, so headings inside code, HTML, lists or
+quotes cannot silently truncate a requirement. Retrying the identical plan
+completes an interrupted operation or returns a no-op for an already completed
+change. `ddp read` requires the expected hash for a design or selected CBE page.
+Put the returned version fields for any code pages used by the design into the
+plan's optional `code_sources`. Those selected dependencies are checked again
+on apply/recovery and by status; their relevant changes mark the record stale.
+Without code sources, DDP runs independently. Paths, including a custom
+`--code-docs` root, stay inside `--project-root`; use a common workspace root
+when design and code documentation live in different project folders.
 
-## License
+Updates currently edit existing UTF-8 files with unique exact replacements.
+Creating/deleting design files uses the host's normal file workflow. Coordinate
+one writer per file: recovery is per-file and does not promise a multi-file
+transaction or arbitrary concurrent editing.
 
-MIT（见 `LICENSE`）。
+## Skills and development
+
+- [Design Doc Protocol](skills/design-doc-protocol/SKILL.md) guides requirement
+  anchoring, design updates, propagation, handoff, and acceptance.
+- [Clean Context](skills/clean-context/SKILL.md) describes the five parts of a
+  focused fresh handoff and how to handle actual input leakage. It does not
+  require another agent for a small task or prescribe a model.
+- The packaged `workflow.py` checks historical step markers only. It is optional
+  compatibility tooling, not a completion or semantic gate.
+
+The public package contains `ddp/`, `ddp_install/`, and the two canonical skills.
+The old public `core/` and `docs/protocol.md` remain historical v0.5 material and
+are not imported by the new runtime. Private development histories and model
+credentials are not part of the installation.
+
+For development, install this checkout in an isolated environment and run
+`python -m unittest discover -s tests -v`. Publishing checks build a wheel and
+exercise installation outside the source tree. Evaluate token usage over the
+whole model session and the same business outcome; a shorter initial packet
+alone does not establish a saving.

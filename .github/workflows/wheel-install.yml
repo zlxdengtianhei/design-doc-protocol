@@ -1,0 +1,57 @@
+name: Wheel installation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+      - name: Build source distribution and wheel
+        run: uv build --sdist --wheel --out-dir "$RUNNER_TEMP/dist"
+      - name: Install wheel in a clean environment
+        run: |
+          uv venv --python ${{ matrix.python }} "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP"/dist/*.whl pytest
+      - name: Test source checkout behavior and resources
+        run: |
+          cd "$RUNNER_TEMP"
+          PYTHONPATH="$GITHUB_WORKSPACE" "$RUNNER_TEMP/venv/bin/python" -m pytest "$GITHUB_WORKSPACE/tests" --import-mode=importlib --basetemp="$RUNNER_TEMP/source-tests" -q
+      - name: Check public wheel contents
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          from zipfile import ZipFile
+          wheel = next((Path(__import__("os").environ["RUNNER_TEMP"]) / "dist").glob("*.whl"))
+          with ZipFile(wheel) as archive:
+              names = archive.namelist()
+              assert all(name.startswith(("ddp/", "ddp_install/", "design_doc_protocol-")) for name in names), names
+              assert any("LICENSE" in name for name in names)
+              assert not any("__pycache__" in name for name in names)
+              assert not any(name.startswith("ddp/docs/") for name in names)
+              assert not any(b"/Users/lexuanzhang" in archive.read(name) or b"dth-context-infra" in archive.read(name) for name in names if not name.endswith("/"))
+          sdist = next((Path(__import__("os").environ["RUNNER_TEMP"]) / "dist").glob("*.tar.gz"))
+          with tarfile.open(sdist) as archive:
+              for member in archive:
+                  if not member.isfile():
+                      continue
+                  relative = "/".join(member.name.split("/")[1:])
+                  assert relative in ("README.md", "LICENSE", "pyproject.toml", "PKG-INFO", ".gitignore") or relative.startswith(("ddp/", "ddp_install/", "skills/", ".dsh/skills/design-doc-protocol/scripts/workflow.py")), relative
+                  payload = archive.extractfile(member).read()
+                  assert b"/Users/lexuanzhang" not in payload and b"dth-context-infra" not in payload, relative
+          PY
+      - name: Test installed wheel outside checkout
+        run: |
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -m pytest "$GITHUB_WORKSPACE/tests/test_installation.py" --import-mode=importlib -q
+          "$RUNNER_TEMP/venv/bin/ddp" --help
+          "$RUNNER_TEMP/venv/bin/ddp-install" install --dir "$RUNNER_TEMP/skills with spaces"
+          "$RUNNER_TEMP/venv/bin/ddp-install" doctor --dir "$RUNNER_TEMP/skills with spaces"
+          "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP/skills with spaces/design-doc-protocol/scripts/workflow.py" --help
